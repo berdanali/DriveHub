@@ -1,0 +1,426 @@
+// Prisma Schema for Car Rental & Vehicle Tracking Platform
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum RoleType {
+  SUPER_ADMIN
+  VEHICLE_OWNER
+  CUSTOMER
+}
+
+enum VehicleStatus {
+  AVAILABLE
+  BOOKED
+  ACTIVE
+  MAINTENANCE
+}
+
+enum RentalStatus {
+  PENDING
+  APPROVED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  REJECTED
+}
+
+enum TransactionType {
+  RENTAL_PAYMENT
+  OWNER_PAYOUT
+  ADMIN_COMMISSION
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+// ============================================
+// MODELS
+// ============================================
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  password      String
+  firstName     String    @map("first_name")
+  lastName      String    @map("last_name")
+  phone         String?
+  avatar        String?
+  birthDate     DateTime? @map("birth_date")
+  tcNumber      String?   @map("tc_number")
+  gender        String?
+  isActive      Boolean   @default(true) @map("is_active")
+  isVerified    Boolean   @default(false) @map("is_verified")
+  refreshToken  String?   @map("refresh_token")
+  
+  // Soft Delete
+  deletedAt     DateTime? @map("deleted_at")
+  
+  // Relations
+  role          Role      @relation(fields: [roleId], references: [id])
+  roleId        String    @map("role_id")
+  
+  // Owner relations
+  vehicles      Vehicle[] @relation("VehicleOwner")
+  
+  // Customer relations
+  rentals       Rental[]  @relation("CustomerRentals")
+  
+  // Favorites
+  favorites             Favorite[]
+  
+  // Profile relations
+  addresses             Address[]
+  driverLicense         DriverLicense?
+  notificationPreference NotificationPreference?
+  
+  // Timestamps
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  
+  // Indexes for common queries
+  @@index([roleId])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@index([createdAt])
+  @@map("users")
+}
+
+model Role {
+  id          String    @id @default(uuid())
+  name        RoleType  @unique
+  description String?
+  
+  // Relations
+  users       User[]
+  
+  // Timestamps
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  
+  @@map("roles")
+}
+
+model Vehicle {
+  id              String        @id @default(uuid())
+  make            String
+  model           String
+  year            Int
+  licensePlate    String        @unique @map("license_plate")
+  color           String
+  seats           Int           @default(5)
+  fuelType        String        @map("fuel_type")
+  transmission    String
+  dailyRate       Decimal       @db.Decimal(10, 2) @map("daily_rate")
+  description     String?
+  images          String[]
+  features        String[]
+  
+  // Location
+  latitude        Float?
+  longitude       Float?
+  address         String?
+  city            String?
+  
+  // Status
+  status          VehicleStatus @default(AVAILABLE)
+  isApproved      Boolean       @default(false) @map("is_approved")
+  
+  // Soft Delete
+  deletedAt       DateTime?     @map("deleted_at")
+  
+  // Relations
+  owner           User          @relation("VehicleOwner", fields: [ownerId], references: [id])
+  ownerId         String        @map("owner_id")
+  rentals         Rental[]
+  gpsLogs         GPSLog[]
+  favorites       Favorite[]
+  
+  // Timestamps
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  
+  // Indexes for search and filtering
+  @@index([status])
+  @@index([ownerId])
+  @@index([isApproved])
+  @@index([deletedAt])
+  @@index([dailyRate])
+  @@index([city])
+  @@index([status, isApproved, deletedAt]) // Composite for public search
+  @@index([ownerId, status]) // Owner's vehicles by status
+  @@index([createdAt])
+  @@map("vehicles")
+}
+
+model Rental {
+  id              String        @id @default(uuid())
+  
+  // Rental details
+  startDate       DateTime      @map("start_date")
+  endDate         DateTime      @map("end_date")
+  actualEndDate   DateTime?     @map("actual_end_date")
+  
+  // Pricing (TRY - Turkish Lira)
+  dailyRate       Decimal       @db.Decimal(10, 2) @map("daily_rate")
+  totalDays       Int           @map("total_days")
+  subtotal        Decimal       @db.Decimal(10, 2)
+  serviceFee      Decimal       @db.Decimal(10, 2) @map("service_fee")
+  totalAmount     Decimal       @db.Decimal(10, 2) @map("total_amount")
+  currency        String        @default("TRY")
+  
+  // Pickup/Return locations
+  pickupLocation  String        @map("pickup_location")
+  returnLocation  String?       @map("return_location")
+  
+  // Status
+  status          RentalStatus  @default(PENDING)
+  notes           String?
+  
+  // Relations
+  vehicle         Vehicle       @relation(fields: [vehicleId], references: [id])
+  vehicleId       String        @map("vehicle_id")
+  customer        User          @relation("CustomerRentals", fields: [customerId], references: [id])
+  customerId      String        @map("customer_id")
+  transactions    Transaction[]
+  
+  // Timestamps
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  
+  // Indexes for common queries
+  @@index([status])
+  @@index([vehicleId])
+  @@index([customerId])
+  @@index([startDate, endDate]) // For availability checking
+  @@index([vehicleId, startDate, endDate]) // Composite for overlap checks
+  @@index([customerId, status]) // Customer's rentals by status
+  @@index([createdAt])
+  @@map("rentals")
+}
+
+model GPSLog {
+  id          String    @id @default(uuid())
+  latitude    Float
+  longitude   Float
+  speed       Float?
+  heading     Float?
+  accuracy    Float?
+  
+  // Relations
+  vehicle     Vehicle   @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  vehicleId   String    @map("vehicle_id")
+  
+  // Timestamp
+  recordedAt  DateTime  @default(now()) @map("recorded_at")
+  
+  // Index for time-series queries
+  @@index([vehicleId, recordedAt])
+  @@index([recordedAt])
+  @@map("gps_logs")
+}
+
+model Transaction {
+  id              String            @id @default(uuid())
+  
+  // Transaction details
+  type            TransactionType
+  amount          Decimal           @db.Decimal(10, 2)
+  currency        String            @default("TRY")
+  status          TransactionStatus @default(PENDING)
+  
+  // Payment details
+  paymentMethod   String?           @map("payment_method")
+  paymentId       String?           @map("payment_id")
+  
+  // Descriptions
+  description     String?
+  metadata        Json?
+  
+  // Relations
+  rental          Rental            @relation(fields: [rentalId], references: [id])
+  rentalId        String            @map("rental_id")
+  
+  // Timestamps
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  
+  // Indexes
+  @@index([type])
+  @@index([status])
+  @@index([rentalId])
+  @@index([paymentId])
+  @@index([createdAt])
+  @@map("transactions")
+}
+
+// ============================================
+// AUDIT LOG (Optional - for enterprise)
+// ============================================
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  action      String    // CREATE, UPDATE, DELETE, LOGIN, etc.
+  entity      String    // User, Vehicle, Rental, etc.
+  entityId    String?   @map("entity_id")
+  userId      String?   @map("user_id")
+  ipAddress   String?   @map("ip_address")
+  userAgent   String?   @map("user_agent")
+  oldData     Json?     @map("old_data")
+  newData     Json?     @map("new_data")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  
+  @@index([entity, entityId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model ContactMessage {
+  id          String    @id @default(uuid())
+  name        String
+  email       String
+  phone       String?
+  subject     String
+  message     String
+  isRead      Boolean   @default(false) @map("is_read")
+  emailSent   Boolean   @default(false) @map("email_sent")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("contact_messages")
+}
+
+// ============================================
+// FAVORİLER
+// ============================================
+
+model Favorite {
+  id          String    @id @default(uuid())
+  
+  // Relations
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String    @map("user_id")
+  vehicle     Vehicle   @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  vehicleId   String    @map("vehicle_id")
+  
+  // Timestamp
+  createdAt   DateTime  @default(now()) @map("created_at")
+  
+  @@unique([userId, vehicleId])
+  @@index([userId])
+  @@index([vehicleId])
+  @@map("favorites")
+}
+
+// ============================================
+// BİLDİRİM TERCİHLERİ
+// ============================================
+
+model NotificationPreference {
+  id                    String   @id @default(uuid())
+  
+  // E-posta Bildirimleri
+  emailRentalUpdates    Boolean  @default(true) @map("email_rental_updates")
+  emailPriceChanges     Boolean  @default(true) @map("email_price_changes")
+  emailPromotions       Boolean  @default(true) @map("email_promotions")
+  emailNewsletter       Boolean  @default(false) @map("email_newsletter")
+  
+  // SMS Bildirimleri
+  smsRentalReminders    Boolean  @default(true) @map("sms_rental_reminders")
+  smsSecurityAlerts     Boolean  @default(true) @map("sms_security_alerts")
+  
+  // Relations
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                String   @unique @map("user_id")
+  
+  // Timestamps
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  
+  @@map("notification_preferences")
+}
+
+// ============================================
+// EHLİYET BİLGİLERİ
+// ============================================
+
+model DriverLicense {
+  id                  String                @id @default(uuid())
+  licenseNumber       String?               @map("license_number")
+  licenseClass        String?               @default("B") @map("license_class")
+  issueDate           DateTime?             @map("issue_date")
+  expiryDate          DateTime?             @map("expiry_date")
+  frontImage          String?               @map("front_image")
+  backImage           String?               @map("back_image")
+  verificationStatus  VerificationStatus    @default(NOT_UPLOADED) @map("verification_status")
+  rejectionReason     String?               @map("rejection_reason")
+  
+  // Relations
+  user                User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId              String                @unique @map("user_id")
+  
+  // Timestamps
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
+  
+  @@map("driver_licenses")
+}
+
+enum VerificationStatus {
+  NOT_UPLOADED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ============================================
+// ADRES BİLGİLERİ
+// ============================================
+
+enum AddressType {
+  BILLING
+  DELIVERY
+}
+
+model Address {
+  id            String      @id @default(uuid())
+  title         String      @default("Ev Adresi")
+  city          String
+  district      String
+  neighborhood  String?
+  street        String?
+  buildingNo    String?     @map("building_no")
+  apartmentNo   String?     @map("apartment_no")
+  postalCode    String?     @map("postal_code")
+  isDefault     Boolean     @default(false) @map("is_default")
+  type          AddressType @default(BILLING)
+  
+  // Relations
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String      @map("user_id")
+  
+  // Timestamps
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  
+  @@index([userId])
+  @@map("addresses")
+}
